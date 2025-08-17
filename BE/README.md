@@ -31,13 +31,8 @@ Convert the global2imgpath.json to this following format(id2index.json)
 
 
 ### 🔧 Local Development
-1. Clone the repo and start all services:
-```bash
-git clone https://github.com/yourusername/aio-aic.git
-cd aio-aic
-```
 
-2. Install uv and setup env
+1. Install uv and setup env
 ```bash
 pip install uv
 uv init --python=3.10
