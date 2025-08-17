@@ -51,20 +51,21 @@ docker compose up -d
 4. Data Migration 
 ```bash
 python migration/embedding_migration.py --file_path <emnedding.pt file>
-python migration/keyframe_migration.py --file_path <id2index.json file path>
+
+<root_folder>/
+ ├─ video1/
+ │   ├─ mapping.json
+ │   └─ metadata.json
+ ├─ video2/
+ │   ├─ mapping.json
+ │   └─ metadata.json
+ ├─ video3/
+ │   ├─ mapping.json
+ │   └─ metadata.json
+python migration/keyframe_migration.py --data_root <folder path>
 ```
 
 5. Run the application
-
-Open 2 tabs
-
-5.1. Run the FastAPI application
-```bash
-cd gui
-streamlit run main.py
-```
-
-5.1. Run the Streamlit application
 ```bash
 cd app
 python main.py
