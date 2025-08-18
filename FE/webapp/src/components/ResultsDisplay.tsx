@@ -212,7 +212,10 @@ export default function ResultsDisplay({
       <div className="p-4 border-b bg-gradient-to-r from-blue-50 to-blue-100">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            {/* Title removed as tabs are self-explanatory */}
+            <Search className="h-5 w-5 text-blue-600" />
+            <h3 className="text-lg font-semibold text-blue-800">
+              Search Results
+            </h3>
           </div>
           <div className="flex items-center gap-2">
             {/* Tab selector */}

@@ -9,6 +9,7 @@ from schema.request import (
     TextSearchWithSelectedGroupsAndVideosRequest,
     MetadataSearchRequest,
     HybridSearchRequest,
+    ObjectSearchRequest,
 )
 from schema.response import KeyframeServiceReponse, SingleKeyframeDisplay, KeyframeDisplay
 from controller.query_controller import QueryController
@@ -278,38 +279,37 @@ async def search_keyframes_by_metadata(
 @router.post(
     "/search/hybrid",
     response_model=KeyframeDisplay,
-    summary="Hybrid search combining text embedding and OCR metadata",
+    summary="Enhanced hybrid search",
     description="""
-    Perform hybrid search: First filter by OCR metadata, then rank by embedding similarity.
+    Search for keyframes using enhanced hybrid approach combining text embedding, OCR metadata, and object detection.
     
-    This endpoint uses a two-step approach:
-    1. Find keyframes that match the OCR query (acts as a filter)
-    2. Rank those keyframes by semantic similarity to the text query
+    This endpoint provides flexible multi-modal search by allowing you to combine:
+    - Text-based semantic search using embeddings (optional)
+    - OCR text search within images (optional)
+    - Object detection filters (optional)
     
-    This is more efficient than searching both separately and ensures all results
-    contain the required OCR text.
+    **At least one search criteria must be provided.**
+    
+    **How it works:**
+    1. Filters by OCR and/or objects first (mandatory filters if provided)
+    2. Performs semantic search only within that filtered set (if query provided)
+    3. Results are ranked by embedding similarity (if query provided) or metadata relevance
     
     **Parameters:**
-    - **query**: The semantic search text
-    - **ocr_query**: The OCR text that must be present (required)
-    - **top_k**: Maximum number of results to return (1-500, default: 10)
-    - **score_threshold**: Minimum hybrid score (0.0-1.0, default: 0.0)
-    - **embedding_weight**: Weight for embedding similarity (0.0-1.0, default: 0.7) [kept for compatibility]
-    - **metadata_weight**: Weight for metadata match (0.0-1.0, default: 0.3) [kept for compatibility]
-    - **case_sensitive**: Whether OCR search should be case sensitive (default: False)
-    
-    **Returns:**
-    List of keyframes with their paths and confidence scores.
+    - **query**: Optional search text for semantic similarity
+    - **ocr_query**: Optional OCR text to search for
+    - **object_filters**: Optional object detection filters with minimum counts
+    - **top_k**: Maximum number of results to return
+    - **score_threshold**: Minimum confidence score for embedding similarity
+    - **case_sensitive**: Whether OCR search is case sensitive
+    - **embedding_weight/metadata_weight**: Kept for API compatibility
     
     **Example:**
     ```json
     {
-        "query": "person walking",
         "ocr_query": "Hôm nay",
+        "object_filters": {"person": 1, "car": 1},
         "top_k": 10,
-        "score_threshold": 0.5,
-        "embedding_weight": 0.7,
-        "metadata_weight": 0.3,
         "case_sensitive": false
     }
     ```
@@ -323,12 +323,24 @@ async def search_keyframes_hybrid(
     Search for keyframes using hybrid approach combining embedding and metadata.
     """
     
+    # Validate that at least one search criteria is provided
+    has_query = request.query is not None and len(request.query.strip()) > 0
+    has_ocr = request.ocr_query is not None and len(request.ocr_query.strip()) > 0
+    has_objects = request.object_filters is not None and len(request.object_filters) > 0
+    
+    if not (has_query or has_ocr or has_objects):
+        raise HTTPException(
+            status_code=422,
+            detail="At least one search criteria must be provided: query, ocr_query, or object_filters"
+        )
+    
     logger.info(f"Hybrid search request: query='{request.query}', ocr_query='{request.ocr_query}', "
                f"embedding_weight={request.embedding_weight}, metadata_weight={request.metadata_weight}")
     
     results = await controller.search_by_hybrid(
         query=request.query,
-        ocr_query=request.ocr_query or "",
+        ocr_query=request.ocr_query,
+        object_filters=request.object_filters,
         top_k=request.top_k,
         score_threshold=request.score_threshold,
         embedding_weight=request.embedding_weight,
@@ -337,6 +349,55 @@ async def search_keyframes_hybrid(
     )
     
     logger.info(f"Found {len(results)} results for hybrid query")
+    
+    display_results = list(
+        map(
+            lambda pair: SingleKeyframeDisplay(path=pair[0], score=pair[1]),
+            map(controller.convert_model_to_path, results)
+        )
+    )
+    return KeyframeDisplay(results=display_results)
+
+
+@router.post(
+    "/search/objects",
+    response_model=KeyframeDisplay,
+    summary="Object detection-based search",
+    description="""
+    Search for keyframes based on object detection results.
+    
+    This endpoint allows you to find keyframes containing specific objects
+    with minimum occurrence counts.
+    
+    **Parameters:**
+    - **object_filters**: Dictionary of object names and minimum counts
+    - **top_k**: Maximum number of results to return
+    
+    **Example:**
+    ```json
+    {
+        "object_filters": {"person": 2, "car": 1},
+        "top_k": 10
+    }
+    ```
+    """
+)
+async def search_keyframes_by_objects(
+    request: ObjectSearchRequest,
+    controller: QueryController = Depends(get_query_controller)
+):
+    """
+    Search for keyframes containing specific objects with minimum counts.
+    """
+    
+    logger.info(f"Object search request: object_filters={request.object_filters}, top_k={request.top_k}")
+    
+    results = await controller.search_by_objects_only(
+        object_filters=request.object_filters,
+        top_k=request.top_k
+    )
+    
+    logger.info(f"Found {len(results)} results for object search")
     
     display_results = list(
         map(

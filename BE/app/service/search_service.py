@@ -66,7 +66,6 @@ class KeyframeQueryService:
         keyframes = await self._retrieve_keyframes(sorted_ids)
 
 
-
         keyframe_map = {k.key: k for k in keyframes}
         response = []
 
@@ -157,8 +156,9 @@ class KeyframeQueryService:
 
     async def search_by_hybrid(
         self,
-        text_embedding: list[float],
-        ocr_query: str,
+        text_embedding: list[float] = None,
+        ocr_query: str = None,
+        object_filters: dict[str, int] = None,
         top_k: int = 10,
         score_threshold: float | None = 0.5,
         embedding_weight: float = 0.7,  # Kept for API compatibility but not used
@@ -166,43 +166,243 @@ class KeyframeQueryService:
         case_sensitive: bool = False
     ) -> list[KeyframeServiceReponse]:
         """
-        Hybrid search: First filter by metadata, then rank by embedding similarity
+        Enhanced Hybrid search: Filter by OCR and/or objects first, then rank by embedding similarity
         
         This approach:
-        1. Filter by OCR first (acts as mandatory filter)
-        2. Search embeddings only within that filtered set  
-        3. Rank by embedding similarity (no need for hybrid scoring since all have OCR match)
+        1. Filter by OCR (if provided) and objects (if provided) as mandatory filters
+        2. Search embeddings only within that filtered set (if embedding provided)
+        3. Rank by embedding similarity or return filtered results
         
-        This ensures all results have OCR matches and is much faster than naive hybrid approaches.
+        This ensures all results match all provided filters and is much faster than naive hybrid approaches.
         The embedding_weight and metadata_weight parameters are kept for API compatibility but not used
-        since we use OCR as a binary filter (must match) and embedding for ranking.
+        since we use filters as binary filters (must match) and embedding for ranking.
         """
         
-        # Step 1: Get OCR-based candidates first (this acts as a filter)
-        ocr_keyframes = await self.keyframe_mongo_repo.search_by_ocr(
-            ocr_query=ocr_query,
-            case_sensitive=case_sensitive,
-            limit=top_k * 5  # Get more candidates since we'll filter by embedding
-        )
+        candidate_ids = None
         
-        if not ocr_keyframes:
-            # No OCR matches found, return empty results
+        # Step 1: Get OCR candidates if OCR query provided
+        if ocr_query:
+            ocr_keyframes = await self.keyframe_mongo_repo.search_by_ocr(
+                ocr_query=ocr_query,
+                case_sensitive=case_sensitive,
+                limit=top_k * 10  # Get more candidates
+            )
+            candidate_ids = set(kf.key for kf in ocr_keyframes)
+        
+        # Step 2: Get object candidates if object filters provided
+        if object_filters:
+            object_keyframes = await self.keyframe_mongo_repo.search_by_objects(
+                object_filters=object_filters,
+                limit=top_k * 10  # Get more candidates
+            )
+            object_candidate_ids = set(kf.key for kf in object_keyframes)
+            
+            # Intersect with OCR candidates if both filters are provided
+            if candidate_ids is not None:
+                candidate_ids = candidate_ids.intersection(object_candidate_ids)
+            else:
+                candidate_ids = object_candidate_ids
+        
+        # If no filters provided but text_embedding available, search all (fallback to regular text search)
+        if candidate_ids is None and text_embedding is not None:
+            return await self.search_by_text(text_embedding, top_k, score_threshold)
+        
+        # If no metadata filters provided and no text embedding, return empty
+        if candidate_ids is None:
             return []
         
-        # Step 2: Extract candidate IDs for vector search exclusion
-        ocr_candidate_ids = [kf.key for kf in ocr_keyframes]
+        # If no candidates found after filtering, return empty
+        if not candidate_ids:
+            return []
         
-        # Get all vector IDs to create exclude list (only search within OCR candidates)
+        # If we have candidates but no text embedding, return the metadata results directly
+        if text_embedding is None:
+            # Get keyframe details for the candidates
+            metadata_results = []
+            if ocr_query:
+                ocr_keyframes = await self.keyframe_mongo_repo.search_by_ocr(
+                    ocr_query=ocr_query,
+                    case_sensitive=case_sensitive,
+                    limit=top_k
+                )
+                for kf in ocr_keyframes:
+                    if kf.key in candidate_ids:
+                        metadata_results.append(
+                            KeyframeServiceReponse(
+                                key=kf.key,
+                                video_num=kf.video_num,
+                                group_num=kf.group_num,
+                                keyframe_num=kf.keyframe_num,
+                                confidence_score=1.0  # Full confidence for metadata-only search
+                            )
+                        )
+            elif object_filters:
+                object_keyframes = await self.keyframe_mongo_repo.search_by_objects(
+                    object_filters=object_filters,
+                    limit=top_k
+                )
+                for kf in object_keyframes:
+                    if kf.key in candidate_ids:
+                        metadata_results.append(
+                            KeyframeServiceReponse(
+                                key=kf.key,
+                                video_num=kf.video_num,
+                                group_num=kf.group_num,
+                                keyframe_num=kf.keyframe_num,
+                                confidence_score=1.0  # Full confidence for metadata-only search
+                            )
+                        )
+            return metadata_results[:top_k]
+        
+        # Step 3: Create exclude list for vector search (search only within candidates)
         all_vector_ids = self.keyframe_vector_repo.get_all_id()
-        exclude_ids = [id_ for id_ in all_vector_ids if id_ not in ocr_candidate_ids]
+        exclude_ids = [id_ for id_ in all_vector_ids if id_ not in candidate_ids]
         
-        # Step 3: Perform vector search only on OCR candidates
+        # Step 4: Perform vector search on filtered candidates
         vector_results = await self._search_keyframes(
             text_embedding=text_embedding,
-            top_k=top_k,  # Just get what we need
+            top_k=top_k,
             score_threshold=score_threshold,
-            exclude_indices=exclude_ids  # Only search within OCR candidates
+            exclude_indices=exclude_ids
         )
         
-        # Results are already in the right format and sorted
+    async def search_by_hybrid(
+        self,
+        text_embedding: list[float] = None,
+        ocr_query: str = None,
+        object_filters: dict[str, int] = None,
+        top_k: int = 10,
+        score_threshold: float | None = 0.5,
+        embedding_weight: float = 0.7,  # Kept for API compatibility but not used
+        metadata_weight: float = 0.3,   # Kept for API compatibility but not used
+        case_sensitive: bool = False
+    ) -> list[KeyframeServiceReponse]:
+        """
+        Enhanced Hybrid search: Filter by OCR and/or objects first, then rank by embedding similarity
+        
+        This approach:
+        1. Filter by OCR (if provided) and objects (if provided) as mandatory filters
+        2. Search embeddings only within that filtered set (if embedding provided)
+        3. Rank by embedding similarity or return filtered results
+        
+        This ensures all results match all provided filters and is much faster than naive hybrid approaches.
+        The embedding_weight and metadata_weight parameters are kept for API compatibility but not used
+        since we use filters as binary filters (must match) and embedding for ranking.
+        """
+        
+        candidate_ids = None
+        
+        # Step 1: Get OCR candidates if OCR query provided
+        if ocr_query:
+            ocr_keyframes = await self.keyframe_mongo_repo.search_by_ocr(
+                ocr_query=ocr_query,
+                case_sensitive=case_sensitive,
+                limit=top_k * 10  # Get more candidates
+            )
+            candidate_ids = set(kf.key for kf in ocr_keyframes)
+        
+        # Step 2: Get object candidates if object filters provided
+        if object_filters:
+            object_keyframes = await self.keyframe_mongo_repo.search_by_objects(
+                object_filters=object_filters,
+                limit=top_k * 10  # Get more candidates
+            )
+            object_candidate_ids = set(kf.key for kf in object_keyframes)
+            
+            # Intersect with OCR candidates if both filters are provided
+            if candidate_ids is not None:
+                candidate_ids = candidate_ids.intersection(object_candidate_ids)
+            else:
+                candidate_ids = object_candidate_ids
+        
+        # If no filters provided but text_embedding available, search all (fallback to regular text search)
+        if candidate_ids is None and text_embedding is not None:
+            return await self.search_by_text(text_embedding, top_k, score_threshold)
+        
+        # If no metadata filters provided and no text embedding, return empty
+        if candidate_ids is None:
+            return []
+        
+        # If no candidates found after filtering, return empty
+        if not candidate_ids:
+            return []
+        
+        # If we have candidates but no text embedding, return the metadata results directly
+        if text_embedding is None:
+            # Get keyframe details for the candidates
+            metadata_results = []
+            if ocr_query:
+                ocr_keyframes = await self.keyframe_mongo_repo.search_by_ocr(
+                    ocr_query=ocr_query,
+                    case_sensitive=case_sensitive,
+                    limit=top_k
+                )
+                for kf in ocr_keyframes:
+                    if kf.key in candidate_ids:
+                        metadata_results.append(
+                            KeyframeServiceReponse(
+                                key=kf.key,
+                                video_num=kf.video_num,
+                                group_num=kf.group_num,
+                                keyframe_num=kf.keyframe_num,
+                                confidence_score=1.0  # Full confidence for metadata-only search
+                            )
+                        )
+            elif object_filters:
+                object_keyframes = await self.keyframe_mongo_repo.search_by_objects(
+                    object_filters=object_filters,
+                    limit=top_k
+                )
+                for kf in object_keyframes:
+                    if kf.key in candidate_ids:
+                        metadata_results.append(
+                            KeyframeServiceReponse(
+                                key=kf.key,
+                                video_num=kf.video_num,
+                                group_num=kf.group_num,
+                                keyframe_num=kf.keyframe_num,
+                                confidence_score=1.0  # Full confidence for metadata-only search
+                            )
+                        )
+            return metadata_results[:top_k]
+        
+        # Step 3: Create exclude list for vector search (search only within candidates)
+        all_vector_ids = self.keyframe_vector_repo.get_all_id()
+        exclude_ids = [id_ for id_ in all_vector_ids if id_ not in candidate_ids]
+        
+        # Step 4: Perform vector search on filtered candidates
+        vector_results = await self._search_keyframes(
+            text_embedding=text_embedding,
+            top_k=top_k,
+            score_threshold=score_threshold,
+            exclude_indices=exclude_ids
+        )
+        
         return vector_results
+
+    async def search_by_objects_only(
+        self,
+        object_filters: dict[str, int],
+        top_k: int = 10
+    ) -> list[KeyframeServiceReponse]:
+        """Search keyframes by object detection results only"""
+        
+        keyframes = await self.keyframe_mongo_repo.search_by_objects(
+            object_filters=object_filters,
+            limit=top_k
+        )
+        
+        # Convert to response format
+        response = []
+        for kf_interface in keyframes:
+            response.append(
+                KeyframeServiceReponse(
+                    key=kf_interface.key,
+                    video_num=kf_interface.video_num,
+                    group_num=kf_interface.group_num,
+                    keyframe_num=kf_interface.keyframe_num,
+                    confidence_score=1.0  # Full confidence for object-only search
+                )
+            )
+        
+        return response[:top_k]

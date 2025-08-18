@@ -84,10 +84,41 @@ class KeyframeRepository(MongoBaseRepository[Keyframe]):
                 keyframe_num=keyframe.keyframe_num
             ) for keyframe in result
         ]
+    
 
-    async def get_keyframes_with_metadata(self, keys: list[int]):
-        """Get keyframes with full metadata including OCR results"""
-        result = await self.find({"key": {"$in": keys}})
-        return result
+    
+    async def search_by_objects(
+    self,
+    object_filters: dict[str, int],
+    limit: int = 100
+    ):
+        """
+        Search keyframes by multiple object detection results.
+        
+        Args:
+            object_filters: dict với key = object_name, value = min_count
+                ví dụ {"person": 2, "car": 1}
+            limit: số lượng kết quả tối đa
+        
+        Returns:
+            List[KeyframeInterface]
+        """
+        query_conditions = [
+            {f"object_counts.{obj}": {"$gte": count}}
+            for obj, count in object_filters.items()
+        ]
+        
+        query = {"$and": query_conditions} if query_conditions else {}
+        
+        result = await self.find(query, limit=limit)
+        return [
+            KeyframeInterface(
+                key=keyframe.key,
+                video_num=keyframe.video_num,
+                group_num=keyframe.group_num,
+                keyframe_num=keyframe.keyframe_num
+            ) for keyframe in result
+        ]
+
 
 

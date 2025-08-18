@@ -124,24 +124,42 @@ class QueryController:
 
     async def search_by_hybrid(
         self,
-        query: str,
-        ocr_query: str,
+        query: str = None,
+        ocr_query: str = None,
+        object_filters: dict[str, int] = None,
         top_k: int = 10,
         score_threshold: float | None = 0.5,
         embedding_weight: float = 0.7,
         metadata_weight: float = 0.3,
         case_sensitive: bool = False
     ) -> list[KeyframeServiceReponse]:
-        """Hybrid search combining text embedding and OCR metadata"""
-        embedding = self.model_service.embedding(query).tolist()[0]
+        """Enhanced hybrid search combining text embedding, OCR metadata, and object detection"""
+        
+        # Only generate embedding if query is provided
+        text_embedding = None
+        if query and query.strip():
+            text_embedding = self.model_service.embedding(query).tolist()[0]
         
         result = await self.keyframe_service.search_by_hybrid(
-            text_embedding=embedding,
+            text_embedding=text_embedding,
             ocr_query=ocr_query,
+            object_filters=object_filters,
             top_k=top_k,
             score_threshold=score_threshold,
             embedding_weight=embedding_weight,
             metadata_weight=metadata_weight,
             case_sensitive=case_sensitive
+        )
+        return result
+
+    async def search_by_objects_only(
+        self,
+        object_filters: dict[str, int],
+        top_k: int = 10
+    ) -> list[KeyframeServiceReponse]:
+        """Search keyframes by object detection results only"""
+        result = await self.keyframe_service.search_by_objects_only(
+            object_filters=object_filters,
+            top_k=top_k
         )
         return result

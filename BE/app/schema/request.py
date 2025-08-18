@@ -41,11 +41,21 @@ class MetadataSearchRequest(BaseModel):
     case_sensitive: bool = Field(default=False, description="Whether search is case sensitive")
 
 
-class HybridSearchRequest(BaseSearchRequest):
-    """Hybrid search combining text embedding and metadata"""
+class HybridSearchRequest(BaseModel):
+    """Enhanced hybrid search combining text embedding, OCR metadata, and object detection"""
+    query: Optional[str] = Field(default=None, description="Search query text for semantic similarity", min_length=1, max_length=1000)
     ocr_query: Optional[str] = Field(default=None, description="OCR text to search for")
+    object_filters: Optional[dict[str, int]] = Field(default=None, description="Object filters with minimum counts (e.g., {'person': 2, 'car': 1})")
+    top_k: int = Field(default=10, ge=1, le=500, description="Number of top results to return")
+    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum confidence score threshold")
     case_sensitive: bool = Field(default=False, description="Whether OCR search is case sensitive")
-    embedding_weight: float = Field(default=0.7, ge=0.0, le=1.0, description="Weight for embedding similarity")
-    metadata_weight: float = Field(default=0.3, ge=0.0, le=1.0, description="Weight for metadata match")
+    embedding_weight: float = Field(default=0.7, ge=0.0, le=1.0, description="Weight for embedding similarity (kept for compatibility)")
+    metadata_weight: float = Field(default=0.3, ge=0.0, le=1.0, description="Weight for metadata match (kept for compatibility)")
+
+
+class ObjectSearchRequest(BaseModel):
+    """Search request for object detection-based search"""
+    object_filters: dict[str, int] = Field(..., description="Object filters with minimum counts (e.g., {'person': 2, 'car': 1})")
+    top_k: int = Field(default=10, ge=1, le=500, description="Number of top results to return")
 
 

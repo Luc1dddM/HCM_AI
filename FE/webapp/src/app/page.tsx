@@ -111,20 +111,8 @@ export default function AnnivatorInterface() {
 
             {/* Section B - Right panel */}
             <div className="flex-1 p-4 bg-gradient-to-br from-blue-50/30 to-white">
-              {/* Header with ANNIVATOR branding */}
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center space-x-4">
-                  <div className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">
-                    ANNIVATOR
-                  </div>
-                  <div className="text-sm text-blue-600 font-medium">
-                    Advanced Video Analysis
-                  </div>
-                </div>
-              </div>
-
               {/* Section D - Keyframe Search */}
-              <div className="mt-8">
+              <div>
                 <KeyframeSearch onSearch={handleKeyframeSearch} />
               </div>
             </div>
